@@ -50,6 +50,7 @@ func main() {
 	}()
 
 	fmt.Println("Waiting for time")
+	timeWaitStart := time.Now()
 	now := time.Now()
 gotTime:
 	for {
@@ -62,6 +63,7 @@ gotTime:
 		default:
 		}
 	}
+	fmt.Println("time set:", time.Since(timeWaitStart))
 
 	start := time.Now()
 	mgaOfflineDecoder := ublox.NewDecoder(mgaOfflineFile)
