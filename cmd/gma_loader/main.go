@@ -49,6 +49,20 @@ func main() {
 		}
 	}()
 
+	fmt.Println("Waiting for time")
+	now := time.Now()
+gotTime:
+	for {
+		msg := <-messageChannel
+		switch m := msg.(type) {
+		case *ubx.NavPvt:
+			now = time.Date(int(m.Year_y), time.Month(int(m.Month_month)), int(m.Day_d), int(m.Hour_h), int(m.Min_min), int(m.Sec_s), int(m.Nano_ns), time.UTC)
+			fmt.Println("Time:", now)
+			break gotTime
+		default:
+		}
+	}
+
 	start := time.Now()
 	mgaOfflineDecoder := ublox.NewDecoder(mgaOfflineFile)
 	for {
@@ -62,7 +76,7 @@ func main() {
 		ano := msg.(*ubx.MgaAno)
 		anoDate := time.Date(int(ano.Year)+2000, time.Month(ano.Month), int(ano.Day), 0, 0, 0, 0, time.UTC)
 
-		if anoDate.Year() == 2023 && anoDate.Month() == 5 && anoDate.Day() == 2 { //todo: get system date
+		if anoDate.Year() == now.Year() && anoDate.Month() == now.Month() && anoDate.Day() == now.Day() { //todo: get system date
 			encoded, err := ubx.Encode(msg.(ubx.Message))
 			handleError("encoding ubx", err)
 			_, err = stream.Write(encoded)
