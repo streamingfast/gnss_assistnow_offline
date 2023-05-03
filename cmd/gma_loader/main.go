@@ -57,6 +57,7 @@ gotTime:
 		msg := <-messageChannel
 		switch m := msg.(type) {
 		case *ubx.NavPvt:
+			fmt.Println("NavPvt info, date validity:", m.Valid, "accuracy:", m.TAcc_ns, "lock type:", m.FixType, "flags:", m.Flags, "flags2:", m.Flags2, "flags3:", m.Flags3)
 			now = time.Date(int(m.Year_y), time.Month(int(m.Month_month)), int(m.Day_d), int(m.Hour_h), int(m.Min_min), int(m.Sec_s), int(m.Nano_ns), time.UTC)
 			fmt.Println("Time:", now)
 			break gotTime
