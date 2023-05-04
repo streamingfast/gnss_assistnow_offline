@@ -11,8 +11,8 @@ builds:
       - CGO_ENABLED=0
     goos:
       - linux
-    main: ./cmd/gma_loader
-    binary: gma_loader
+    main: ./cmd/mga_loader
+    binary: mga_loader
 archives:
   - replacements:
       darwin: Darwin
