@@ -63,7 +63,7 @@ gotTime:
 	mgaOfflineFilePath := os.Args[1]
 	if _, err := os.Stat(mgaOfflineFilePath); errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("File %s does not exist\n", mgaOfflineFilePath)
-		os.Exit(1)
+		os.Exit(0)
 	}
 
 	mgaOfflineFile, err := os.Open(mgaOfflineFilePath)

@@ -2,9 +2,7 @@ module gnss_assistnow_offline
 
 go 1.20
 
-replace (
-	github.com/daedaleanai/ublox => /Users/cbillett/devel/github/ublox
-)
+replace github.com/daedaleanai/ublox => /Users/cbillett/devel/github/ublox
 
 require (
 	github.com/daedaleanai/ublox v0.0.0-20210116232802-16609b0f9f43
