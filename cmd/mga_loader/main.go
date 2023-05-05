@@ -22,15 +22,6 @@ func main() {
 		StopBits: serial.Stop1,
 	}
 
-	mgaOfflineFilePath := os.Args[1]
-	if _, err := os.Stat(mgaOfflineFilePath); errors.Is(err, os.ErrNotExist) {
-		fmt.Printf("File %s does not exist\n", mgaOfflineFilePath)
-		os.Exit(1)
-	}
-
-	mgaOfflineFile, err := os.Open(mgaOfflineFilePath)
-	handleError("opening mga file", err)
-
 	stream, err := serial.OpenPort(config)
 	handleError("opening gps serial port", err)
 
@@ -59,12 +50,24 @@ gotTime:
 		case *ubx.NavPvt:
 			fmt.Println("NavPvt info, date validity:", m.Valid, "accuracy:", m.TAcc_ns, "lock type:", m.FixType, "flags:", m.Flags, "flags2:", m.Flags2, "flags3:", m.Flags3)
 			now = time.Date(int(m.Year_y), time.Month(int(m.Month_month)), int(m.Day_d), int(m.Hour_h), int(m.Min_min), int(m.Sec_s), int(m.Nano_ns), time.UTC)
-			fmt.Println("Time:", now)
-			break gotTime
+			if m.Valid&0x1 != 0 {
+				fmt.Println("Got a valid date:", now)
+				break gotTime
+			}
 		default:
 		}
 	}
+	//todo: set system time
 	fmt.Println("time set:", time.Since(timeWaitStart))
+
+	mgaOfflineFilePath := os.Args[1]
+	if _, err := os.Stat(mgaOfflineFilePath); errors.Is(err, os.ErrNotExist) {
+		fmt.Printf("File %s does not exist\n", mgaOfflineFilePath)
+		os.Exit(1)
+	}
+
+	mgaOfflineFile, err := os.Open(mgaOfflineFilePath)
+	handleError("opening mga file", err)
 
 	start := time.Now()
 	mgaOfflineDecoder := ublox.NewDecoder(mgaOfflineFile)
