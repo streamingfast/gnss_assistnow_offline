@@ -187,7 +187,7 @@ func SetSystemDate(newTime time.Time) error {
 	if err != nil {
 		return fmt.Errorf("look for date binary: %w", err)
 	} else {
-		dateString := newTime.Format("2006-01-2 15:4:5")
+		dateString := newTime.Format("2006-01-02 15:04:05")
 		//dateString := newTime.Format("2 Jan 2006 15:04:05")
 		fmt.Printf("Setting system date to: %s\n", dateString)
 		args := []string{"--set", dateString}
