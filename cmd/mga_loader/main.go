@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/daedaleanai/ublox"
@@ -31,6 +32,7 @@ func main() {
 	timeSet := make(chan time.Time)
 	timeGetter := NewTimeGetter(timeSet)
 
+	messageHandlersLock := sync.Mutex{}
 	messageHandlers := map[reflect.Type][]messageHandler{}
 	messageHandlers[reflect.TypeOf(&ubx.NavPvt{})] = []messageHandler{timeGetter}
 
@@ -50,10 +52,12 @@ func main() {
 				handleError("decoding ubx", err)
 			}
 			//fmt.Println("received message", msg, "of type", reflect.TypeOf(msg))
+			messageHandlersLock.Lock()
 			handlers := messageHandlers[reflect.TypeOf(msg)]
 			for _, handler := range handlers {
 				handler.handle(msg)
 			}
+			messageHandlersLock.Unlock()
 		}
 	}()
 
@@ -61,6 +65,10 @@ func main() {
 	loadAll := false
 	select {
 	case now = <-timeSet:
+		messageHandlersLock.Lock()
+		delete(messageHandlers, reflect.TypeOf(&ubx.NavPvt{})) //todo: this is a hack, we should have a way to unregister handlers
+		messageHandlersLock.Unlock()
+
 	case <-time.After(5 * time.Second):
 		fmt.Println("not time yet, will load all ano messages")
 		loadAll = true
