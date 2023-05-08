@@ -33,7 +33,7 @@ func main() {
 				if err == io.EOF {
 					break
 				}
-				handleError("decoding ubx", err)
+				fmt.Println("ERROR: decoding ubx", err)
 			}
 			messageChannel <- msg
 		}

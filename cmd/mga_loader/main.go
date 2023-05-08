@@ -1,11 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"os"
+	"os/exec"
+	"reflect"
 	"time"
 
 	"github.com/daedaleanai/ublox"
@@ -25,7 +28,13 @@ func main() {
 	stream, err := serial.OpenPort(config)
 	handleError("opening gps serial port", err)
 
-	messageChannel := make(chan interface{})
+	timeSet := make(chan time.Time)
+	timeGetter := NewTimeGetter(timeSet)
+
+	messageHandlers := map[reflect.Type][]messageHandler{}
+	messageHandlers[reflect.TypeOf(&ubx.NavPvt{})] = []messageHandler{timeGetter}
+
+	fmt.Println("handlers", messageHandlers)
 	go func() {
 		d := ublox.NewDecoder(stream)
 		for {
@@ -34,80 +43,158 @@ func main() {
 				if err == io.EOF {
 					break
 				}
+				if err.Error() == "invalid UBX checksum" {
+					fmt.Println("WARNING: invalid UBX checksum")
+					continue
+				}
 				handleError("decoding ubx", err)
 			}
-			messageChannel <- msg
+			//fmt.Println("received message", msg, "of type", reflect.TypeOf(msg))
+			handlers := messageHandlers[reflect.TypeOf(msg)]
+			for _, handler := range handlers {
+				handler.handle(msg)
+			}
 		}
 	}()
 
-	fmt.Println("Waiting for time")
-	timeWaitStart := time.Now()
-	now := time.Now()
-gotTime:
-	for {
-		msg := <-messageChannel
-		switch m := msg.(type) {
-		case *ubx.NavPvt:
-			fmt.Println("NavPvt info, date validity:", m.Valid, "accuracy:", m.TAcc_ns, "lock type:", m.FixType, "flags:", m.Flags, "flags2:", m.Flags2, "flags3:", m.Flags3)
-			now = time.Date(int(m.Year_y), time.Month(int(m.Month_month)), int(m.Day_d), int(m.Hour_h), int(m.Min_min), int(m.Sec_s), int(m.Nano_ns), time.UTC)
-			if m.Valid&0x1 != 0 {
-				fmt.Println("Got a valid date:", now)
-				break gotTime
-			}
-		default:
-		}
+	now := time.Time{}
+	loadAll := false
+	select {
+	case now = <-timeSet:
+	case <-time.After(5 * time.Second):
+		fmt.Println("not time yet, will load all ano messages")
+		loadAll = true
 	}
-	//todo: set system time
-	fmt.Println("time set:", time.Since(timeWaitStart))
 
 	mgaOfflineFilePath := os.Args[1]
 	if _, err := os.Stat(mgaOfflineFilePath); errors.Is(err, os.ErrNotExist) {
 		fmt.Printf("File %s does not exist\n", mgaOfflineFilePath)
-		os.Exit(0)
+	} else {
+		loader := NewAnoLoader()
+		messageHandlers[reflect.TypeOf(&ubx.MgaAckData0{})] = []messageHandler{loader}
+		err = loader.loadAnoFile(mgaOfflineFilePath, loadAll, now, stream)
+		handleError("loading ano file", err)
 	}
 
-	mgaOfflineFile, err := os.Open(mgaOfflineFilePath)
+	fmt.Println()
+	if now == (time.Time{}) {
+		fmt.Println("Waiting for time")
+		now = <-timeSet
+	}
+}
+
+type messageHandler interface {
+	handle(interface{})
+}
+
+type AnoLoader struct {
+	anoPerSatellite map[uint8]int
+	ackChannel      chan *ubx.MgaAckData0
+}
+
+func NewAnoLoader() *AnoLoader {
+	return &AnoLoader{
+		anoPerSatellite: map[uint8]int{},
+		ackChannel:      make(chan *ubx.MgaAckData0),
+	}
+}
+
+func (l *AnoLoader) loadAnoFile(file string, loadAll bool, now time.Time, stream io.Writer) error {
+	fmt.Println("loading mga offline file:", file)
+	mgaOfflineFile, err := os.Open(file)
 	handleError("opening mga file", err)
 
-	start := time.Now()
 	mgaOfflineDecoder := ublox.NewDecoder(mgaOfflineFile)
+	sentCount := 0
 	for {
 		msg, err := mgaOfflineDecoder.Decode()
 		if err != nil {
 			if err == io.EOF {
+				fmt.Println("reach mga EOF")
 				break
 			}
 			handleError("decoding ubx from mga offline file", err)
 		}
 		ano := msg.(*ubx.MgaAno)
 		anoDate := time.Date(int(ano.Year)+2000, time.Month(ano.Month), int(ano.Day), 0, 0, 0, 0, time.UTC)
-
-		if anoDate.Year() == now.Year() && anoDate.Month() == now.Month() && anoDate.Day() == now.Day() { //todo: get system date
+		if loadAll || (anoDate.Year() == now.Year() && anoDate.Month() == now.Month() && anoDate.Day() == now.Day()) { //todo: get system date
+			fmt.Println("processing an ANO message")
 			encoded, err := ubx.Encode(msg.(ubx.Message))
-			handleError("encoding ubx", err)
+			if err != nil {
+				return fmt.Errorf("encoding ano message: %w", err)
+			}
 			_, err = stream.Write(encoded)
-			handleError("writing to gpsd", err)
-			fmt.Printf("Sent: %#v\n", msg)
+			if err != nil {
+				return fmt.Errorf("writing to stream: %w", err)
+			}
+			time.Sleep(100 * time.Millisecond)
 
-			var ack *ubx.MgaAckData0
+		goAck:
 			for {
-				fmt.Println("Waiting for ack")
 				select {
-				case msg := <-messageChannel:
-					if a, ok := msg.(*ubx.MgaAckData0); ok {
-						ack = a
-						fmt.Println("Got ack:", ack)
+				case ack := <-l.ackChannel:
+					d, err := json.Marshal(ack)
+					if err != nil {
+						return err
 					}
-				case <-time.After(1 * time.Second):
-					panic("Timed out")
-				}
-				if ack != nil {
-					break
+					fmt.Println("got ack:", string(d))
+					break goAck
+				case <-time.After(5 * time.Second):
+					return errors.New("timeout waiting for ack")
 				}
 			}
+			fmt.Print(".")
+			sentCount++
 		}
 	}
-	fmt.Println("Send all ubx.MgaAno messageChannel", time.Since(start))
+
+	return nil
+}
+
+func (l *AnoLoader) handle(message interface{}) {
+	fmt.Println("handling ack")
+	ack := message.(*ubx.MgaAckData0)
+	l.ackChannel <- ack
+}
+
+type TimeGetter struct {
+	done chan time.Time
+}
+
+func NewTimeGetter(done chan time.Time) *TimeGetter {
+	return &TimeGetter{done: done}
+}
+
+func (g *TimeGetter) handle(message interface{}) {
+	navPvt := message.(*ubx.NavPvt)
+	fmt.Println("time getter nav pvt info, date validity:", navPvt.Valid, "accuracy:", navPvt.TAcc_ns, "lock type:", navPvt.FixType, "flags:", navPvt.Flags, "flags2:", navPvt.Flags2, "flags3:", navPvt.Flags3)
+	if navPvt.Valid&0x1 == 0 {
+		return
+	}
+	now := time.Date(int(navPvt.Year_y), time.Month(int(navPvt.Month_month)), int(navPvt.Day_d), int(navPvt.Hour_h), int(navPvt.Min_min), int(navPvt.Sec_s), int(navPvt.Nano_ns), time.UTC)
+	fmt.Println("Got a valid date:", now)
+
+	err := SetSystemDate(now)
+	if err != nil {
+		fmt.Println("Error setting system date:", err)
+		os.Exit(1)
+	}
+	g.done <- now
+}
+
+func SetSystemDate(newTime time.Time) error {
+	_, err := exec.LookPath("date")
+	if err != nil {
+		return fmt.Errorf("look for date binary: %w", err)
+	} else {
+		dateString := newTime.Format("2006-01-2 15:4:5")
+		//dateString := newTime.Format("2 Jan 2006 15:04:05")
+		fmt.Printf("Setting system date to: %s\n", dateString)
+		args := []string{"--set", dateString}
+		cmd := exec.Command("date", args...)
+		fmt.Println("Running cmd:", cmd.String())
+		return cmd.Run()
+	}
 }
 
 func handleError(context string, err error) {
